@@ -5,6 +5,9 @@ import { CreateUserService } from '../services/CreateUserService';
 import { GetAllUsersService } from '../services/GetAllUsersService';
 import { GetUserBySocketIdService } from '../services/GetUserBySocketIdService';
 import { GetChatRoomByUsersService } from '../services/GetChatRoomByUsersService';
+import { CreateMessageService } from '../services/CreateMessageService';
+import { GetMessageByChatRoomService } from '../services/GetMessageByChatRoomService';
+import { GetChatRoomByIdService } from '../services/GetChatRoomByIdService';
 
 
 io.on('connect', (socket) => {
@@ -36,6 +39,7 @@ io.on('connect', (socket) => {
     const createChatRoomService = container.resolve(CreateChatRoomService);
     const getUserBySocketIdService = container.resolve(GetUserBySocketIdService);
     const getChatRoomByUsersServices = container.resolve(GetChatRoomByUsersService);
+    const getMessageByChatRoomService = container.resolve(GetMessageByChatRoomService);
 
     const userLogged = await getUserBySocketIdService.execute(socket.id);
 
@@ -48,7 +52,45 @@ io.on('connect', (socket) => {
       room = await createChatRoomService.execute([data.idUser, userLogged._id]);
     }
 
-    callback(room);
+    socket.join(room.idChatRoom);
+
+    // buscar mensagens da sala
+    const messages = await getMessageByChatRoomService.execute(room.idChatRoom);
+    
+    callback({room, messages});
+  });
+
+  socket.on('message', async (data) => {
+    // buscar as informações do usuários
+    const getUserBySocketIdService = container.resolve(GetUserBySocketIdService);
+    const user = await getUserBySocketIdService.execute(socket.id);
+    
+    const getChatRoomByIdService = container.resolve(GetChatRoomByIdService);
+
+
+    // salvar a mensagem
+    const createMessageService = container.resolve(CreateMessageService);
+    const message = await createMessageService.execute({
+      to: user._id,
+      text: data.message,
+      roomId: data.idChatRoom
+    });
+
+    // enviar a mensagem para outros usuários da sala
+    io.to(data.idChatRoom).emit('message', {
+      message,
+      user
+    });
+
+
+    // Enviar notificação para o usuário correto
+    const room = await getChatRoomByIdService.execute(data.idChatRoom);
+    const userFrom = room.idUsers.find(response => String(response._id) !== String(user._id));
+    io.to(userFrom.socket_id).emit('notification', {
+      newMessage: true,
+      roomId: data.idChatRoom,
+      from: user,
+    })
   });
 
 });
